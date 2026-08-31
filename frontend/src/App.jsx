@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar from './components/Sidebar';
 import ChatPage from './pages/ChatPage';
-import DocumentsPage from './pages/DocumentsPage';
 import AuthPage from './pages/AuthPage';
 
 function ProtectedLayout() {
@@ -96,7 +95,6 @@ function ProtectedLayout() {
               onConversationUpdated={handleConversationUpdated}
             />
           } />
-          <Route path="/documents" element={<DocumentsPage />} />
         </Routes>
       </main>
     </div>

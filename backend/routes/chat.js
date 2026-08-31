@@ -2,6 +2,7 @@ import express from 'express';
 import { chat } from '../services/gemini.js';
 import auth from '../middleware/auth.js';
 import Conversation from '../models/Conversation.js';
+import Document from '../models/Document.js';
 
 const router = express.Router();
 
@@ -16,12 +17,12 @@ router.use(auth);
  */
 router.post('/', async (req, res) => {
   try {
-    const { message, conversationId } = req.body;
+    const { message, conversationId, attachments = [] } = req.body;
 
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      return res.status(400).json({ error: 'Message is required.' });
+    if ((!message || typeof message !== 'string' || message.trim().length === 0) && attachments.length === 0) {
+      return res.status(400).json({ error: 'Message or attachment is required.' });
     }
-    if (message.length > 5000) {
+    if (message && message.length > 5000) {
       return res.status(400).json({ error: 'Message is too long. Maximum 5000 characters.' });
     }
 
@@ -41,19 +42,33 @@ router.post('/', async (req, res) => {
     // Add user message
     conversation.messages.push({
       role: 'user',
-      content: message.trim(),
+      content: message ? message.trim() : '',
+      attachments: attachments,
       timestamp: new Date(),
     });
 
     // Build history for Gemini (previous messages in this conversation)
-    const conversationHistory = conversation.messages.slice(0, -1).map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const conversationHistory = conversation.messages.slice(0, -1)
+      .filter(m => m.role !== 'system')
+      .map(m => ({
+        role: m.role,
+        content: m.content || 'I have attached a document.',
+      }));
 
-    console.log(`💬 [${req.user.email}] User: ${message.substring(0, 80)}${message.length > 80 ? '...' : ''}`);
+    const safeMessage = message ? message.trim() : '';
+    console.log(`💬 [${req.user.email}] User: ${safeMessage ? safeMessage.substring(0, 80) : '[Attachment only]'}`);
 
-    const result = await chat(message.trim(), conversationHistory);
+    let result;
+    if (!safeMessage && attachments.length > 0) {
+      // If they only sent an attachment, bypass the AI and ask what they want to know
+      result = {
+        reply: "I've received your document. What would you like to ask about it?",
+        sources: [],
+        documentCount: await Document.countDocuments({ conversationId: conversation._id })
+      };
+    } else {
+      result = await chat(safeMessage, conversationHistory, conversation._id.toString());
+    }
 
     // Add AI response
     conversation.messages.push({
@@ -133,6 +148,7 @@ router.get('/conversations/:id', async (req, res) => {
       messages: conversation.messages.map(m => ({
         role: m.role,
         content: m.content,
+        attachments: m.attachments || [],
         sources: m.sources || [],
         timestamp: m.timestamp,
       })),
@@ -147,7 +163,7 @@ router.get('/conversations/:id', async (req, res) => {
 
 /**
  * DELETE /api/chat/conversations/:id
- * Delete a conversation.
+ * Delete a conversation and its associated documents.
  */
 router.delete('/conversations/:id', async (req, res) => {
   try {
@@ -159,6 +175,9 @@ router.delete('/conversations/:id', async (req, res) => {
     if (!result) {
       return res.status(404).json({ error: 'Conversation not found.' });
     }
+
+    // Delete all associated documents from MongoDB
+    await Document.deleteMany({ conversationId: req.params.id });
 
     console.log(`🗑️  [${req.user.email}] Conversation deleted: ${req.params.id}`);
     res.json({ message: 'Conversation deleted.' });

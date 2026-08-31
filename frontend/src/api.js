@@ -49,11 +49,11 @@ export async function apiGetMe(token) {
 
 // ==================== CHAT ====================
 
-export async function sendMessage(message, conversationId = null) {
+export async function sendMessage(message, conversationId = null, attachments = []) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ message, conversationId }),
+    body: JSON.stringify({ message, conversationId, attachments }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -89,17 +89,22 @@ export async function deleteConversation(id) {
 
 // ==================== DOCUMENTS ====================
 
-export async function getDocuments() {
-  const res = await fetch(`${API_BASE}/documents`, {
+export async function getDocuments(conversationId = null) {
+  const url = conversationId ? `${API_BASE}/documents?conversationId=${conversationId}` : `${API_BASE}/documents`;
+  const res = await fetch(url, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error('Failed to fetch documents');
   return res.json();
 }
 
-export async function uploadDocument(file) {
+export async function uploadDocument(file, conversationId = null) {
   const formData = new FormData();
   formData.append('document', file);
+  if (conversationId) {
+    formData.append('conversationId', conversationId);
+  }
+  
   const res = await fetch(`${API_BASE}/documents/upload`, {
     method: 'POST',
     headers: authHeaders(),

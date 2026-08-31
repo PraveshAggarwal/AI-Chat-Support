@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowUp, Sparkles, Upload, Loader2, CheckCircle, AlertCircle, Plus, FileText, Image as ImageIcon, X } from 'lucide-react';
 import ChatMessage from '../components/ChatMessage';
 import TypingIndicator from '../components/TypingIndicator';
-import { sendMessage, getConversation, uploadDocument, getDocuments, deleteDocument } from '../api';
+import { sendMessage, getConversation, uploadDocument } from '../api';
 
 export default function ChatPage({ conversationId: initialConversationId, onConversationCreated }) {
   const [messages, setMessages] = useState([]);
@@ -11,23 +11,15 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  
+  // New state for ChatGPT-style pending attachment
+  const [pendingFile, setPendingFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  
   const [toastMsg, setToastMsg] = useState(null);
-  const [kbDocuments, setKbDocuments] = useState([]);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  const loadKb = async () => {
-    try {
-      const data = await getDocuments();
-      setKbDocuments(data.documents || []);
-    } catch (err) {}
-  };
-
-  useEffect(() => {
-    loadKb();
-  }, []);
 
   const isNewChat = messages.length === 0 && !loadingConversation;
 
@@ -44,7 +36,7 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, pendingFile]);
 
   // Focus input
   useEffect(() => {
@@ -71,18 +63,77 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   };
 
+  // 1. User selects a file (from button or drag/drop)
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!['.pdf', '.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'].includes(ext)) { 
+      setToastMsg({ type: 'error', text: `File type ${ext} not supported.` });
+      setTimeout(() => setToastMsg(null), 4000);
+      return; 
+    }
+    if (file.size > 10 * 1024 * 1024) { 
+      setToastMsg({ type: 'error', text: 'File too large. Max 10MB.' });
+      setTimeout(() => setToastMsg(null), 4000);
+      return; 
+    }
+    
+    // Add to pending state instead of uploading immediately
+    setPendingFile(file);
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 10);
+  };
+
+  // 2. User clicks Send
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if ((!text && !pendingFile) || isLoading || isUploading) return;
 
-    const userMessage = { role: 'user', content: text, timestamp: new Date().toISOString() };
+    let currentConversationId = conversationId;
+    let uploadedAttachments = [];
+
+    // Step A: Upload the document first if there is one
+    if (pendingFile) {
+      try {
+        setIsUploading(true);
+        const data = await uploadDocument(pendingFile, currentConversationId);
+        
+        if (!currentConversationId && data.conversationId) {
+          setConversationId(data.conversationId);
+          onConversationCreated?.(data.conversationId);
+          currentConversationId = data.conversationId;
+        }
+
+        // Push to attachments array for the user message
+        if (data.document) {
+          uploadedAttachments.push(data.document);
+        }
+      } catch (err) {
+        setToastMsg({ type: 'error', text: err.message });
+        setIsUploading(false);
+        setTimeout(() => setToastMsg(null), 4000);
+        return; // Stop if upload fails
+      } finally {
+        setIsUploading(false);
+        setPendingFile(null); // Clear attachment from input area
+      }
+    }
+
+    const userMessage = { 
+      role: 'user', 
+      content: text, 
+      attachments: uploadedAttachments,
+      timestamp: new Date().toISOString() 
+    };
+    
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setIsLoading(true);
 
     try {
-      const response = await sendMessage(text, conversationId);
+      const response = await sendMessage(text, currentConversationId, uploadedAttachments);
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -91,8 +142,7 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
         timestamp: new Date().toISOString(),
       }]);
 
-      // If this was a new conversation, update the conversationId
-      if (!conversationId && response.conversationId) {
+      if (!currentConversationId && response.conversationId) {
         setConversationId(response.conversationId);
         onConversationCreated?.(response.conversationId);
       }
@@ -120,49 +170,11 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
     textareaRef.current?.focus();
   };
 
-  const handleUpload = async (file) => {
-    if (!file) return;
-    const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!['.pdf', '.txt', '.md', '.png', '.jpg', '.jpeg', '.webp'].includes(ext)) { 
-      setToastMsg({ type: 'error', text: `File type ${ext} not supported.` });
-      setTimeout(() => setToastMsg(null), 4000);
-      return; 
-    }
-    if (file.size > 10 * 1024 * 1024) { 
-      setToastMsg({ type: 'error', text: 'File too large. Max 10MB.' });
-      setTimeout(() => setToastMsg(null), 4000);
-      return; 
-    }
-    try {
-      setIsUploading(true);
-      setToastMsg(null);
-      const data = await uploadDocument(file);
-      setToastMsg({ type: 'success', text: `"${data.document.name}" uploaded to knowledge base!` });
-      loadKb();
-    } catch (err) {
-      setToastMsg({ type: 'error', text: err.message });
-    } finally {
-      setIsUploading(false);
-      setTimeout(() => setToastMsg(null), 4000);
-    }
-  };
-
-  const handleDeleteDoc = async (id) => {
-    if (!confirm('Remove document from Knowledge Base?')) return;
-    try {
-      await deleteDocument(id);
-      loadKb();
-    } catch (e) {
-      setToastMsg({ type: 'error', text: e.message });
-      setTimeout(() => setToastMsg(null), 4000);
-    }
-  };
-
   const onDrop = useCallback((e) => { 
     e.preventDefault(); 
     setDragOver(false); 
     const f = e.dataTransfer?.files?.[0]; 
-    if (f) handleUpload(f); 
+    if (f) handleFileSelect(f); 
   }, []);
   const onDragOver = useCallback((e) => { e.preventDefault(); setDragOver(true); }, []);
   const onDragLeave = useCallback((e) => { 
@@ -209,8 +221,8 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
           }}>
             <Upload size={32} color="#10a37f" />
           </div>
-          <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#0d0d0d' }}>Drop document to upload</h2>
-          <p style={{ fontSize: '14px', color: '#8e8ea0', marginTop: '8px' }}>Adds to your Knowledge Base</p>
+          <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#0d0d0d' }}>Drop document to attach</h2>
+          <p style={{ fontSize: '14px', color: '#8e8ea0', marginTop: '8px' }}>Attach to your message</p>
         </div>
       )}
 
@@ -227,51 +239,6 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
           <span style={{ fontSize: '14px', fontWeight: 500, color: toastMsg.type === 'error' ? '#ef4444' : '#0d8a6a' }}>
             {toastMsg.text}
           </span>
-        </div>
-      )}
-
-      {/* Uploading Indicator */}
-      {isUploading && !toastMsg && (
-         <div className="anim-fade" style={{
-           position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 60,
-           display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px',
-           background: '#fff', border: '1px solid #e5e5e5', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
-         }}>
-           <Loader2 size={16} color="#8e8ea0" className="animate-spin" />
-           <span style={{ fontSize: '14px', color: '#0d0d0d', fontWeight: 500 }}>Uploading document...</span>
-         </div>
-      )}
-
-      {/* Knowledge Base Top Bar */}
-      {kbDocuments.length > 0 && (
-        <div className="anim-fade-up" style={{
-          padding: '12px 16px', background: '#fff', borderBottom: '1px solid #e5e5e5',
-          display: 'flex', gap: '8px', overflowX: 'auto', flexShrink: 0,
-        }}>
-          {kbDocuments.map(doc => (
-            <div key={doc.id} style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '6px 10px', background: '#f4f4f4', borderRadius: '8px',
-              fontSize: '12px', color: '#4a4a4a', flexShrink: 0,
-            }}>
-              {doc.type.startsWith('image/') ? <ImageIcon size={14} color="#8e8ea0" /> : <FileText size={14} color="#8e8ea0" />}
-              <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {doc.name}
-              </span>
-              <button
-                onClick={() => handleDeleteDoc(doc.id)}
-                disabled={isUploading}
-                style={{
-                  background: 'none', border: 'none', padding: '2px', cursor: isUploading ? 'not-allowed' : 'pointer',
-                  display: 'flex', alignItems: 'center', color: '#b4b4b4'
-                }}
-                onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
-                onMouseLeave={e => e.currentTarget.style.color = '#b4b4b4'}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
         </div>
       )}
 
@@ -338,10 +305,46 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
           <div style={{
             position: 'relative', background: '#f4f4f4',
             borderRadius: '16px', border: '1px solid transparent', overflow: 'hidden',
+            transition: 'border-color 0.2s',
           }}
             onFocusCapture={e => e.currentTarget.style.borderColor = '#d1d1d1'}
             onBlurCapture={e => e.currentTarget.style.borderColor = 'transparent'}
           >
+            
+            {/* Pending File Attachment Area (ChatGPT style) */}
+            {pendingFile && (
+              <div className="anim-fade-up" style={{ padding: '10px 14px', borderBottom: '1px solid #e5e5e5', display: 'flex', alignItems: 'center' }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                  background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', 
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
+                }}>
+                  {isUploading ? (
+                    <Loader2 size={16} color="#8e8ea0" className="animate-spin" />
+                  ) : (
+                    pendingFile.type.startsWith('image/') ? <ImageIcon size={16} color="#10a37f" /> : <FileText size={16} color="#10a37f" />
+                  )}
+                  <span style={{ fontSize: '13px', color: '#0d0d0d', fontWeight: 500, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {pendingFile.name}
+                  </span>
+                  {!isUploading && (
+                    <button 
+                      onClick={() => setPendingFile(null)}
+                      title="Remove attachment"
+                      style={{ 
+                        background: '#f4f4f4', border: 'none', borderRadius: '50%', width: '20px', height: '20px',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8e8ea0', marginLeft: '4px' 
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#ef4444'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#f4f4f4'; e.currentTarget.style.color = '#8e8ea0'; }}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -349,24 +352,25 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
               accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp" 
               onChange={e => {
                 const f = e.target.files?.[0];
-                if (f) handleUpload(f);
+                if (f) handleFileSelect(f);
                 e.target.value = '';
               }}
             />
+            
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || isUploading}
+              disabled={isLoading || isUploading || pendingFile !== null}
               style={{
                 position: 'absolute', left: '10px', bottom: '10px',
                 width: '32px', height: '32px', borderRadius: '50%',
                 border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: (isLoading || isUploading) ? 'not-allowed' : 'pointer', 
+                cursor: (isLoading || isUploading || pendingFile !== null) ? 'not-allowed' : 'pointer', 
                 background: 'transparent', color: '#8e8ea0',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={e => { if(!isLoading && !isUploading) e.currentTarget.style.background = '#e3e3e3' }}
-              onMouseLeave={e => { if(!isLoading && !isUploading) e.currentTarget.style.background = 'transparent' }}
-              title="Upload to Knowledge Base"
+              onMouseEnter={e => { if(!isLoading && !isUploading && !pendingFile) e.currentTarget.style.background = '#e3e3e3' }}
+              onMouseLeave={e => { if(!isLoading && !isUploading && !pendingFile) e.currentTarget.style.background = 'transparent' }}
+              title="Attach File"
             >
               <Plus size={20} />
             </button>
@@ -389,14 +393,14 @@ export default function ChatPage({ conversationId: initialConversationId, onConv
             />
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading}
+              disabled={(!input.trim() && !pendingFile) || isLoading || isUploading}
               style={{
                 position: 'absolute', right: '10px', bottom: '10px',
                 width: '32px', height: '32px', borderRadius: '8px',
                 border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: input.trim() && !isLoading ? 'pointer' : 'not-allowed',
-                background: input.trim() && !isLoading ? '#0d0d0d' : '#e3e3e3',
-                color: input.trim() && !isLoading ? '#fff' : '#b4b4b4',
+                cursor: ((input.trim() || pendingFile) && !isLoading && !isUploading) ? 'pointer' : 'not-allowed',
+                background: ((input.trim() || pendingFile) && !isLoading && !isUploading) ? '#0d0d0d' : '#e3e3e3',
+                color: ((input.trim() || pendingFile) && !isLoading && !isUploading) ? '#fff' : '#b4b4b4',
                 transition: 'all 0.15s',
               }}
             >

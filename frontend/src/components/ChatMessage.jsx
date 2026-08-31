@@ -27,6 +27,28 @@ export default function ChatMessage({ message }) {
     transition: 'all 0.15s',
   });
 
+  if (role === 'system') {
+    return (
+      <div className="anim-fade-up" style={{ padding: '16px 0', display: 'flex', justifyContent: 'center' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px',
+          background: '#f9f9f9', border: '1px solid #e5e5e5', borderRadius: '12px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+        }}>
+          <div style={{
+            width: '24px', height: '24px', borderRadius: '6px', background: '#eaf7f2',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
+            <FileText size={14} color="#10a37f" />
+          </div>
+          <p style={{ fontSize: '13px', color: '#4a4a4a', fontWeight: 500 }}>
+            {content}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="anim-slide" style={{ padding: '16px 0' }}>
       <div style={{ maxWidth: '768px', margin: '0 auto', padding: '0 16px' }}>
@@ -57,9 +79,30 @@ export default function ChatMessage({ message }) {
             </p>
 
             {isUser ? (
-              <p style={{ fontSize: '15px', color: '#0d0d0d', lineHeight: '1.7', whiteSpace: 'pre-wrap' }}>
-                {content}
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* Render Attachments */}
+                {message.attachments && message.attachments.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {message.attachments.map((att, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                        background: '#f4f4f4', border: '1px solid #e5e5e5', borderRadius: '10px', 
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                      }}>
+                        {att.type?.startsWith('image/') ? <Sparkles size={16} color="#10a37f" /> : <FileText size={16} color="#10a37f" />}
+                        <span style={{ fontSize: '13px', color: '#0d0d0d', fontWeight: 500, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {att.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {content && (
+                  <p style={{ fontSize: '15px', color: '#0d0d0d', lineHeight: '1.7', whiteSpace: 'pre-wrap' }}>
+                    {content}
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="md-body" style={{ fontSize: '15px', color: '#4a4a4a' }}>
                 <ReactMarkdown>{content}</ReactMarkdown>

@@ -124,26 +124,6 @@ export default function Sidebar({ isOpen, onToggle, activeConversationId, onSele
         </button>
       </div>
 
-      {/* Knowledge Base link */}
-      <div style={{ padding: '4px 8px 0' }}>
-        <NavLink
-          to="/documents"
-          style={({ isActive }) => ({
-            display: 'flex', alignItems: 'center', gap: '10px',
-            padding: '10px 12px', borderRadius: '8px', fontSize: '14px',
-            textDecoration: 'none', transition: 'background 0.15s',
-            background: isActive ? '#e3e3e3' : 'transparent',
-            color: isActive ? '#0d0d0d' : '#4a4a4a',
-            fontWeight: isActive ? '500' : '400',
-          })}
-          onMouseEnter={e => { if (!e.currentTarget.style.background.includes('e3e3e3')) e.currentTarget.style.background = '#ececec'; }}
-          onMouseLeave={e => { const a = e.currentTarget.getAttribute('aria-current'); if (!a) e.currentTarget.style.background = 'transparent'; }}
-        >
-          <FileText size={16} />
-          <span>Knowledge Base</span>
-        </NavLink>
-      </div>
-
       {/* Divider */}
       <div style={{ height: '1px', background: '#e5e5e5', margin: '8px 16px' }} />
 

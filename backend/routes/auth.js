@@ -48,6 +48,10 @@ router.post('/signup', async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({ error: 'An account with this email already exists.' });
     }
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({ error: messages.join(', ') });
+    }
     res.status(500).json({ error: 'Failed to create account.' });
   }
 });

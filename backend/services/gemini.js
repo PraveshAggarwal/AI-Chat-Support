@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getAllDocumentsWithContent } from './documentStore.js';
+import Document from '../models/Document.js';
 
 let genAI = null;
 let model = null;
@@ -41,11 +41,11 @@ CRITICAL RULES:
   const textDocs = documents.filter(d => !d.type.startsWith('image/'));
 
   if (textDocs.length === 0 && documents.length === 0) {
-    systemPrompt += `\n--- KNOWLEDGE BASE ---\nNo documents have been uploaded yet. Inform the user that the knowledge base is empty and they need to upload documents first.\n--- END KNOWLEDGE BASE ---`;
+    systemPrompt += `\n--- KNOWLEDGE BASE ---\nNo documents have been uploaded for this chat yet. Inform the user that the knowledge base is empty and they need to upload documents first.\n--- END KNOWLEDGE BASE ---`;
   } else if (textDocs.length > 0) {
     systemPrompt += `\n--- KNOWLEDGE BASE ---\n`;
     textDocs.forEach((doc, index) => {
-      systemPrompt += `\n### Document ${index + 1}: "${doc.name}" (Uploaded: ${doc.uploadedAt})\n${doc.content}\n`;
+      systemPrompt += `\n### Document ${index + 1}: "${doc.name}" (Uploaded: ${doc.createdAt || doc.uploadedAt})\n${doc.content}\n`;
     });
     systemPrompt += `\n--- END KNOWLEDGE BASE ---`;
   }
@@ -57,14 +57,16 @@ CRITICAL RULES:
  * Send a message to Gemini with document context and conversation history.
  * @param {string} userMessage - The user's question
  * @param {Array} conversationHistory - Previous messages [{role, content}]
- * @returns {object} { reply, sources }
+ * @param {string} conversationId - The ID of the conversation
+ * @returns {object} { reply, sources, documentCount }
  */
-export async function chat(userMessage, conversationHistory = []) {
+export async function chat(userMessage, conversationHistory = [], conversationId) {
   if (!genAI) {
     throw new Error('Gemini AI is not initialized. Check your API key.');
   }
 
-  const documents = getAllDocumentsWithContent();
+  // Fetch full documents directly from DB
+  const documents = await Document.find({ conversationId }).lean();
   const systemPrompt = buildSystemInstruction(documents);
   const imageDocs = documents.filter(d => d.type.startsWith('image/'));
 

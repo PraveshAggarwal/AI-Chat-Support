@@ -3,12 +3,15 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { addDocument, listDocuments, deleteDocument, getDocument } from '../services/documentStore.js';
+import auth from '../middleware/auth.js';
+import Conversation from '../models/Conversation.js';
+import Document from '../models/Document.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+router.use(auth); // All document routes require authentication
 
 // Configure multer for file uploads
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
@@ -50,6 +53,14 @@ router.post('/upload', upload.single('document'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded.' });
     }
 
+    let { conversationId } = req.body;
+    
+    // If no conversation exists (uploading to a New Chat), create an empty one
+    if (!conversationId) {
+      const newConv = await Conversation.create({ userId: req.user.id, messages: [] });
+      conversationId = newConv._id.toString();
+    }
+
     const filePath = req.file.path;
     const ext = path.extname(req.file.originalname).toLowerCase();
     let content = '';
@@ -77,21 +88,28 @@ router.post('/upload', upload.single('document'), async (req, res) => {
       return res.status(400).json({ error: 'Could not extract content from the file.' });
     }
 
-    const doc = addDocument(req.file.originalname, docType, content);
+    const doc = await Document.create({
+      name: req.file.originalname,
+      type: docType,
+      content,
+      conversationId,
+      userId: req.user.id,
+    });
 
     // Clean up uploaded file after extraction
     fs.unlinkSync(filePath);
 
-    console.log(`📄 Document uploaded: "${doc.name}" (${content.length} chars)`);
+    console.log(`📄 [${req.user.email}] Document uploaded to chat ${conversationId}: "${doc.name}"`);
 
     res.status(201).json({
       message: 'Document uploaded successfully.',
       document: {
-        id: doc.id,
+        id: doc._id,
         name: doc.name,
         type: doc.type,
-        uploadedAt: doc.uploadedAt,
+        uploadedAt: doc.createdAt,
       },
+      conversationId, // Return this so the frontend knows if a new chat was created
     });
   } catch (err) {
     console.error('Upload error:', err);
@@ -103,34 +121,67 @@ router.post('/upload', upload.single('document'), async (req, res) => {
  * GET /api/documents
  * List all documents in the knowledge base.
  */
-router.get('/', (req, res) => {
-  const docs = listDocuments();
-  res.json({ documents: docs, total: docs.length });
+router.get('/', async (req, res) => {
+  try {
+    const { conversationId } = req.query;
+    if (!conversationId) {
+      return res.json({ documents: [], total: 0 }); // Empty if no chat selected
+    }
+    const docs = await Document.find({ conversationId, userId: req.user.id })
+      .select('-content') // Exclude heavy content payload
+      .sort({ createdAt: -1 })
+      .lean();
+      
+    const result = docs.map(d => ({
+      id: d._id,
+      name: d.name,
+      type: d.type,
+      uploadedAt: d.createdAt,
+    }));
+    
+    res.json({ documents: result, total: result.length });
+  } catch (err) {
+    console.error('List documents error:', err);
+    res.status(500).json({ error: 'Failed to list documents.' });
+  }
 });
 
 /**
  * GET /api/documents/:id
  * Get a specific document.
  */
-router.get('/:id', (req, res) => {
-  const doc = getDocument(req.params.id);
-  if (!doc) {
-    return res.status(404).json({ error: 'Document not found.' });
+router.get('/:id', async (req, res) => {
+  try {
+    const doc = await Document.findOne({ _id: req.params.id, userId: req.user.id }).lean();
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found.' });
+    }
+    // Rename _id to id
+    doc.id = doc._id;
+    delete doc._id;
+    res.json({ document: doc });
+  } catch (err) {
+    console.error('Get document error:', err);
+    res.status(500).json({ error: 'Failed to load document.' });
   }
-  res.json({ document: doc });
 });
 
 /**
  * DELETE /api/documents/:id
  * Delete a document from the knowledge base.
  */
-router.delete('/:id', (req, res) => {
-  const deleted = deleteDocument(req.params.id);
-  if (!deleted) {
-    return res.status(404).json({ error: 'Document not found.' });
+router.delete('/:id', async (req, res) => {
+  try {
+    const deleted = await Document.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+    if (!deleted) {
+      return res.status(404).json({ error: 'Document not found or unauthorized.' });
+    }
+    console.log(`🗑️  [${req.user.email}] Document deleted: ${req.params.id}`);
+    res.json({ message: 'Document deleted successfully.' });
+  } catch (err) {
+    console.error('Delete document error:', err);
+    res.status(500).json({ error: 'Failed to delete document.' });
   }
-  console.log(`🗑️  Document deleted: ${req.params.id}`);
-  res.json({ message: 'Document deleted successfully.' });
 });
 
 export default router;

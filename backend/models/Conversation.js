@@ -3,13 +3,18 @@ import mongoose from 'mongoose';
 const messageSchema = new mongoose.Schema({
   role: {
     type: String,
-    enum: ['user', 'assistant'],
+    enum: ['user', 'assistant', 'system'],
     required: true,
   },
   content: {
     type: String,
-    required: true,
+    required: false, // Make it optional in case a message is JUST an attachment
   },
+  attachments: [{
+    id: String,
+    name: String,
+    type: String,
+  }],
   sources: {
     type: [String],
     default: [],

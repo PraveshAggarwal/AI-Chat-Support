@@ -7,7 +7,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 import { initGemini } from './services/gemini.js';
-import { addDocument, getDocumentCount } from './services/documentStore.js';
+// No documentStore imports needed
 import authRoutes from './routes/auth.js';
 import chatRoutes from './routes/chat.js';
 import documentRoutes from './routes/documents.js';
@@ -48,19 +48,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Load sample data if no documents exist
-function loadSampleData() {
-  if (getDocumentCount() === 0) {
-    const samplePath = path.join(__dirname, 'data', 'sample-faq.txt');
-    if (fs.existsSync(samplePath)) {
-      const content = fs.readFileSync(samplePath, 'utf-8');
-      addDocument('sample-faq.txt', 'txt', content);
-      console.log('📚 Sample FAQ document loaded into knowledge base');
-    }
-  } else {
-    console.log(`📚 ${getDocumentCount()} document(s) already in knowledge base`);
-  }
-}
+// Documents are now conversation-scoped, so no global sample data is loaded.
 
 // Connect to MongoDB and start server
 async function start() {
@@ -91,9 +79,6 @@ async function start() {
 
   // Initialize Gemini
   initGemini();
-
-  // Load sample data
-  loadSampleData();
 
   app.listen(PORT, () => {
     console.log(`\n🌐 Server running at http://localhost:${PORT}`);
